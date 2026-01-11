@@ -31,9 +31,37 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Enable CORS
+const corsOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+const allowedOrigins = corsOrigins.length
+  ? corsOrigins
+  : ['http://localhost:8080', 'http://localhost:5173'];
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true;
+  for (const allowed of allowedOrigins) {
+    if (allowed === origin) return true;
+
+    // Basic wildcard support, e.g. https://*.vercel.app
+    if (allowed.includes('*')) {
+      const escaped = allowed
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*');
+      const re = new RegExp(`^${escaped}$`);
+      if (re.test(origin)) return true;
+    }
+  }
+  return false;
+};
+
 app.use(
   cors({
-    origin: ['http://localhost:8080', 'http://localhost:5173'],
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
   })
 );
