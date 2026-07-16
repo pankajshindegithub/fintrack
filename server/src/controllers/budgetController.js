@@ -1,4 +1,5 @@
 import Budget from '../models/budgetModel.js';
+import Transaction from '../models/transactionModel.js';
 import ErrorResponse from '../utils/errorResponse.js';
 import asyncHandler from '../middleware/asyncHandler.js';
 
@@ -49,10 +50,38 @@ export const getBudgets = asyncHandler(async (req, res, next) => {
 
   const budgets = await Budget.find(filter).sort({ month: -1, createdAt: -1 });
 
-  res.status(200).json({
-    success: true,
-    data: budgets
-  });
+  // ── Auto-calculate spent from real transactions ──────────────────────────
+  const enriched = await Promise.all(
+    budgets.map(async (budget) => {
+      // Parse the budget month (YYYY-MM) into a date range
+      const [year, mon] = budget.month.split('-').map(Number);
+      const start = new Date(year, mon - 1, 1);          // first day of month
+      const end   = new Date(year, mon, 1);               // first day of next month
+
+      const agg = await Transaction.aggregate([
+        {
+          $match: {
+            user: budget.user,
+            type: 'expense',
+            category: budget.category,
+            date: { $gte: start, $lt: end }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      const spent = agg.length ? Number(agg[0].total) : 0;
+
+      return {
+        ...budget.toObject(),
+        spent,
+        remaining: Math.max(0, budget.limit - spent),
+        percentUsed: budget.limit > 0 ? Math.round((spent / budget.limit) * 100) : 0
+      };
+    })
+  );
+
+  res.status(200).json({ success: true, data: enriched });
 });
 
 export const deleteBudget = asyncHandler(async (req, res, next) => {
